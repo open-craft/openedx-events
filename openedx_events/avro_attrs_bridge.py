@@ -104,24 +104,25 @@ class AvroAttrsBridge:
             ],
         }
 
-        record_fields = self._record_fields_for_attrs_class(attrs_cls)
+        record_fields = self._record_fields_for_attrs_class(attrs_cls, "data")
         base_schema["fields"].append(record_fields)
         return base_schema
 
-    def _record_fields(self, cls, field_name: str = "data"):
+    def _record_fields_from_data_dict(self, cls):
         field: Dict[str, Any] = {}
-        field["name"] = field_name
+        field["name"] = "data"
         field["type"] = dict(name=cls.__name__, type="record", fields=[])
         for key_name, data_type in cls.data.items():
-            pass
+            field["type"]["fields"].append(self._get_object_fields(key_name, data_type))
+        return field
 
 
-    def _get_object_fields(self, _object):
-        inner_field = {}
+    def _get_object_fields(self, object_name, _object):
+        inner_field = {"name": object_name}
         # Attribute is a simple type.
         if _object.type in AVRO_TYPE_FOR:
             inner_field = {
-                "name": _object.name,
+                "name": object_name,
                 "type": AVRO_TYPE_FOR[_object.type],
             }
 
@@ -133,13 +134,13 @@ class AvroAttrsBridge:
             # so only define an attr record once
             if _object.type.__name__ in self.schema_record_names:
                 inner_field = {
-                    "name": _object.name,
+                    "name": object_name,
                     "type": _object.type.__name__,
                 }
             else:
                 self.schema_record_names.add(_object.type.__name__)
                 inner_field = self._record_fields_for_attrs_class(
-                    _object.type, _object.name
+                    _object.type, object_name
                 )
         # else _object is an costom type and
         # there needs to be AvroAttrsBridgeExtension for _object in self.extensions
@@ -148,7 +149,7 @@ class AvroAttrsBridge:
             extension = self.extensions.get(_object.type)
             if extension is not None:
                 inner_field = {
-                    "name": _object.name,
+                    "name": object_name,
                     "type": extension.record_fields(),
                 }
             else:
@@ -163,9 +164,9 @@ class AvroAttrsBridge:
             inner_field["default"] = None
 
         return inner_field
+
     def _record_fields_for_attrs_class(
-        self, attrs_class, field_name: str = "data"
-    ) -> Dict[str, Any]:
+        self, attrs_class, field_name: str) -> Dict[str, Any]:
         """
         Generate avro record for attrs_class.
 
@@ -178,7 +179,9 @@ class AvroAttrsBridge:
         field["type"] = dict(name=attrs_class.__name__, type="record", fields=[])
 
         for attribute in attrs_class.__attrs_attrs__:
-            field["type"]["fields"].append(self._get_object_fields(attribute))
+            # TODO does get_object_fields need ot attribute.name
+            field["type"]["fields"].append(self._get_object_fields(attribute.name, attribute))
+
 
         return field
 
