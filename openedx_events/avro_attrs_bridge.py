@@ -108,6 +108,61 @@ class AvroAttrsBridge:
         base_schema["fields"].append(record_fields)
         return base_schema
 
+    def _record_fields(self, cls, field_name: str = "data"):
+        field: Dict[str, Any] = {}
+        field["name"] = field_name
+        field["type"] = dict(name=cls.__name__, type="record", fields=[])
+        for key_name, data_type in cls.data.items():
+            pass
+
+
+    def _get_object_fields(self, _object):
+        inner_field = {}
+        # Attribute is a simple type.
+        if _object.type in AVRO_TYPE_FOR:
+            inner_field = {
+                "name": _object.name,
+                "type": AVRO_TYPE_FOR[_object.type],
+            }
+
+        # _object is another attrs class
+        elif hasattr(_object.type, "__attrs_attrs__"):
+            # Inner Attrs Class
+
+            # fastavro does not allow you to redefine the same record type more than once,
+            # so only define an attr record once
+            if _object.type.__name__ in self.schema_record_names:
+                inner_field = {
+                    "name": _object.name,
+                    "type": _object.type.__name__,
+                }
+            else:
+                self.schema_record_names.add(_object.type.__name__)
+                inner_field = self._record_fields_for_attrs_class(
+                    _object.type, _object.name
+                )
+        # else _object is an costom type and
+        # there needs to be AvroAttrsBridgeExtension for _object in self.extensions
+        else:
+            inner_field = None
+            extension = self.extensions.get(_object.type)
+            if extension is not None:
+                inner_field = {
+                    "name": _object.name,
+                    "type": extension.record_fields(),
+                }
+            else:
+                raise TypeError(
+                    f"AvroAttrsBridgeExtension for {_object.type} not in self.extensions."
+                )
+        # Assume _object is optional if it has a default value
+        # The default value is always set to None to allow attr class to handle dealing with default values
+        # in dict_to_attrs function in this class
+        if _object.default is not attr.NOTHING:
+            inner_field["type"] = ["null", inner_field["type"]]
+            inner_field["default"] = None
+
+        return inner_field
     def _record_fields_for_attrs_class(
         self, attrs_class, field_name: str = "data"
     ) -> Dict[str, Any]:
@@ -123,50 +178,7 @@ class AvroAttrsBridge:
         field["type"] = dict(name=attrs_class.__name__, type="record", fields=[])
 
         for attribute in attrs_class.__attrs_attrs__:
-            # Attribute is a simple type.
-            if attribute.type in AVRO_TYPE_FOR:
-                inner_field = {
-                    "name": attribute.name,
-                    "type": AVRO_TYPE_FOR[attribute.type],
-                }
-
-            # Attribute is another attrs class
-            elif hasattr(attribute.type, "__attrs_attrs__"):
-                # Inner Attrs Class
-
-                # fastavro does not allow you to redefine the same record type more than once,
-                # so only define an attr record once
-                if attribute.type.__name__ in self.schema_record_names:
-                    inner_field = {
-                        "name": attribute.name,
-                        "type": attribute.type.__name__,
-                    }
-                else:
-                    self.schema_record_names.add(attribute.type.__name__)
-                    inner_field = self._record_fields_for_attrs_class(
-                        attribute.type, attribute.name
-                    )
-            # else attribute is an costom type and
-            # there needs to be AvroAttrsBridgeExtension for attribute in self.extensions
-            else:
-                inner_field = None
-                extension = self.extensions.get(attribute.type)
-                if extension is not None:
-                    inner_field = {
-                        "name": attribute.name,
-                        "type": extension.record_fields(),
-                    }
-                else:
-                    raise TypeError(
-                        f"AvroAttrsBridgeExtension for {attribute.type} not in self.extensions."
-                    )
-            # Assume attribute is optional if it has a default value
-            # The default value is always set to None to allow attr class to handle dealing with default values
-            # in dict_to_attrs function in this class
-            if attribute.default is not attr.NOTHING:
-                inner_field["type"] = ["null", inner_field["type"]]
-                inner_field["default"] = None
-            field["type"]["fields"].append(inner_field)
+            field["type"]["fields"].append(self._get_object_fields(attribute))
 
         return field
 
