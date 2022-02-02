@@ -32,7 +32,7 @@ class AvroAttrsBridge:
         "type": "org.openedx.test.test.test.v0",
     }
 
-    def __init__(self, attrs_cls, extensions=None, config=None):
+    def __init__(self,  attrs_cls=None,  extensions=None, config=None, signal_cls = None):
         """
         Init method for Avro Attrs Bridge.
 
@@ -54,7 +54,6 @@ class AvroAttrsBridge:
                         Should be formatted `{Reverse DNS}.{Architecture Subdomain}.{Subject}.{Action}.{Major Version}`.
                         For more info, see OEP-41: Asynchronous Server Event Message Format
         """
-        self._attrs_cls = attrs_cls
 
         self.extensions = {}
         self.extensions.update(self.default_extensions)
@@ -66,13 +65,26 @@ class AvroAttrsBridge:
         if isinstance(config, dict):
             self.config.update(config)
 
-        # Used by record_field_for_attrs_class function to keep track of which
-        # records have already been defined in schema.
-        # Reason: fastavro does no allow you to define record with same name twice
-        self.schema_record_names = set()
-        self.schema_dict = self._attrs_to_avro_schema(attrs_cls)
-        # make sure the schema is parsable
-        fastavro.parse_schema(self.schema_dict)
+        if attrs_cls is not None:
+            self._attrs_cls = attrs_cls
+            # Used by record_field_for_attrs_class function to keep track of which
+            # records have already been defined in schema.
+            # Reason: fastavro does no allow you to define record with same name twice
+            self.schema_record_names = set()
+            self.schema_dict = self._attrs_to_avro_schema(attrs_cls)
+            breakpoint()
+            # make sure the schema is parsable
+            fastavro.parse_schema(self.schema_dict)
+        elif signal_cls is not None:
+            self._signal_cls = signal_cls
+            # Used by record_field_for_attrs_class function to keep track of which
+            # records have already been defined in schema.
+            # Reason: fastavro does no allow you to define record with same name twice
+            self.schema_record_names = set()
+            self.schema_dict = self._signal_to_avro_schema(signal_cls)
+            breakpoint()
+            # make sure the schema is parsable
+            fastavro.parse_schema(self.schema_dict)
 
     def schema_str(self):
         """Json dumps schema dict into a string."""
@@ -108,45 +120,64 @@ class AvroAttrsBridge:
         base_schema["fields"].append(record_fields)
         return base_schema
 
+    def _signal_to_avro_schema(self, signal_cls):
+        """
+        Generate avro schema for attr_cls.
+
+        Arguments:
+            attrs_cls: Attr class object
+        Returns:
+            complex dict that defines avro schema for attrs_cls
+        """
+
+        base_schema = {
+            "type": "record",
+            "fields": [
+            ],
+        }
+        record_fields = self._record_fields_from_data_dict(signal_cls)
+        base_schema["fields"].append(record_fields)
+        return base_schema
+
     def _record_fields_from_data_dict(self, cls):
         field: Dict[str, Any] = {}
         field["name"] = "data"
-        field["type"] = dict(name=cls.__name__, type="record", fields=[])
-        for key_name, data_type in cls.data.items():
+        field["type"] = dict(name='OpenEdxPublicSignal', type="record", fields=[])
+        for key_name, data_type in cls.init_data.items():
             field["type"]["fields"].append(self._get_object_fields(key_name, data_type))
         return field
 
 
-    def _get_object_fields(self, object_name, _object):
+    def _get_object_fields(self, object_name, _object_type,if_default=False, default=None):
         inner_field = {"name": object_name}
         # Attribute is a simple type.
-        if _object.type in AVRO_TYPE_FOR:
+        if _object_type in AVRO_TYPE_FOR:
             inner_field = {
                 "name": object_name,
-                "type": AVRO_TYPE_FOR[_object.type],
+                "type": AVRO_TYPE_FOR[_object_type],
             }
 
-        # _object is another attrs class
-        elif hasattr(_object.type, "__attrs_attrs__"):
+        # _object_type is another attrs class
+        elif hasattr(_object_type, "__attrs_attrs__"):
             # Inner Attrs Class
 
             # fastavro does not allow you to redefine the same record type more than once,
             # so only define an attr record once
-            if _object.type.__name__ in self.schema_record_names:
+            if _object_type.__name__ in self.schema_record_names:
                 inner_field = {
                     "name": object_name,
-                    "type": _object.type.__name__,
+                    "type": _object_type.__name__,
                 }
             else:
-                self.schema_record_names.add(_object.type.__name__)
+                self.schema_record_names.add(_object_type.__name__)
                 inner_field = self._record_fields_for_attrs_class(
-                    _object.type, object_name
+                    _object_type, object_name
                 )
-        # else _object is an costom type and
-        # there needs to be AvroAttrsBridgeExtension for _object in self.extensions
+        # else _object_type is an costom type and
+        # there needs to be AvroAttrsBridgeExtension for _object_type in self.extensions
         else:
             inner_field = None
-            extension = self.extensions.get(_object.type)
+            extension = self.extensions.get(_object_type)
             if extension is not None:
                 inner_field = {
                     "name": object_name,
@@ -154,12 +185,13 @@ class AvroAttrsBridge:
                 }
             else:
                 raise TypeError(
-                    f"AvroAttrsBridgeExtension for {_object.type} not in self.extensions."
+                    f"AvroAttrsBridgeExtension for {_object_type} not in self.extensions."
                 )
-        # Assume _object is optional if it has a default value
+        # Assume _object_type is optional if it has a default value
         # The default value is always set to None to allow attr class to handle dealing with default values
         # in dict_to_attrs function in this class
-        if _object.default is not attr.NOTHING:
+        # TODO make sure defaults are handled properly
+        if if_default and default is not attr.NOTHING:
             inner_field["type"] = ["null", inner_field["type"]]
             inner_field["default"] = None
 
@@ -180,9 +212,7 @@ class AvroAttrsBridge:
 
         for attribute in attrs_class.__attrs_attrs__:
             # TODO does get_object_fields need ot attribute.name
-            field["type"]["fields"].append(self._get_object_fields(attribute.name, attribute))
-
-
+            field["type"]["fields"].append(self._get_object_fields(attribute.name, attribute.type, True, attribute.default))
         return field
 
     def to_dict(self, obj, event_overrides=None):
