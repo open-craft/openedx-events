@@ -11,7 +11,7 @@ import attr
 import fastavro
 
 from openedx_events.avro_attrs_bridge_extensions import DatetimeAvroAttrsBridgeExtension
-from openedx_events.avro_types import AVRO_TYPE_FOR
+from openedx_events.avro_types import PYTHON_TYPE_TO_AVRO_MAPPING
 
 
 class AvroAttrsBridge:
@@ -149,11 +149,20 @@ class AvroAttrsBridge:
 
     def _get_object_fields(self, object_name, _object_type,if_default=False, default=None):
         inner_field = {"name": object_name}
-        # Attribute is a simple type.
-        if _object_type in AVRO_TYPE_FOR:
+        if (extension := self.extensions.get(_object_type, None)):
             inner_field = {
                 "name": object_name,
-                "type": AVRO_TYPE_FOR[_object_type],
+                "type": extension.record_fields(),
+            }
+        # Attribute is a simple type.
+        elif _object_type in PYTHON_TYPE_TO_AVRO_MAPPING:
+            if PYTHON_TYPE_TO_AVRO_MAPPING[_object_type] in ["record", "array"]:
+                # TODO: figure out how to handle container types. This will require better specifications for types in openedx-events repositories.
+                # This is a conversation that needs to be had with others, for now, these data types will not be supported by this bridge.
+                raise Exception("item type for container object not specified")
+            inner_field = {
+                "name": object_name,
+                "type": PYTHON_TYPE_TO_AVRO_MAPPING[_object_type],
             }
 
         # _object_type is another attrs class
@@ -175,17 +184,9 @@ class AvroAttrsBridge:
         # else _object_type is an costom type and
         # there needs to be AvroAttrsBridgeExtension for _object_type in self.extensions
         else:
-            inner_field = None
-            extension = self.extensions.get(_object_type)
-            if extension is not None:
-                inner_field = {
-                    "name": object_name,
-                    "type": extension.record_fields(),
-                }
-            else:
-                raise TypeError(
-                    f"AvroAttrsBridgeExtension for {_object_type} not in self.extensions."
-                )
+            raise TypeError(
+                f"Object type {_object_type} is not supported by AvroAttrsBridge. The object type needs to either be one of the types in PYTHON_TYPE_TO_AVRO_MAPPING, attrs decorated class, or one of the types defined in self.extensions"
+            )
         # Assume _object_type is optional if it has a default value
         # The default value is always set to None to allow attr class to handle dealing with default values
         # in dict_to_attrs function in this class
@@ -361,7 +362,7 @@ class AvroAttrsBridge:
                             raise Exception(
                                 f"Necessary key: {attribute.name} not found in data dict"
                             )
-                    elif attribute.type not in AVRO_TYPE_FOR:
+                    elif attribute.type not in PYTHON_TYPE_TO_AVRO_MAPPING:
                         raise TypeError(
                             f"Unable to deserialize {attribute.type} data, please add extension for custom data type"
                         )

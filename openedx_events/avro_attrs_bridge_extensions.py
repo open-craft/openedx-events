@@ -6,7 +6,7 @@ from datetime import datetime
 
 from opaque_keys.edx.keys import CourseKey
 
-from openedx_events.avro_types import AVRO_TYPE_FOR
+from openedx_events.avro_types import PYTHON_TYPE_TO_AVRO_MAPPING
 
 
 class AvroAttrsBridgeExtention(ABC):
@@ -35,7 +35,7 @@ class AvroAttrsBridgeExtention(ABC):
         """
         Abstract method to define avro schema for self.cls.
 
-        This is usually just a AVRO_TYPE_FOR[str]
+        This is usually just a PYTHON_TYPE_TO_AVRO_MAPPING[str]
         """
         ...
 
@@ -57,7 +57,7 @@ class CourseKeyAvroAttrsBridgeExtension(AvroAttrsBridgeExtention):
 
     def record_fields(self):
         """Define avro schema for self.cls."""
-        return AVRO_TYPE_FOR[str]
+        return PYTHON_TYPE_TO_AVRO_MAPPING[str]
 
 
 class DatetimeAvroAttrsBridgeExtension(AvroAttrsBridgeExtention):
@@ -77,4 +77,4 @@ class DatetimeAvroAttrsBridgeExtension(AvroAttrsBridgeExtention):
 
     def record_fields(self):
         """Define avro schema for self.cls."""
-        return AVRO_TYPE_FOR[str]
+        return PYTHON_TYPE_TO_AVRO_MAPPING[str]
