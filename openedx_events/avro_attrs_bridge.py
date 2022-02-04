@@ -10,7 +10,8 @@ from typing import Any, Dict
 import attr
 import fastavro
 
-from openedx_events.avro_attrs_bridge_extensions import DatetimeAvroAttrsBridgeExtension
+from openedx_events.avro_attrs_bridge_extensions import DatetimeAvroAttrsBridgeExtension, CourseKeyAvroAttrsBridgeExtension
+
 from openedx_events.avro_types import PYTHON_TYPE_TO_AVRO_MAPPING
 
 
@@ -23,7 +24,8 @@ class AvroAttrsBridge:
 
     # default extensions, can be overwriteen by passing in extensions during obj initialization
     default_extensions = {
-        DatetimeAvroAttrsBridgeExtension.cls: DatetimeAvroAttrsBridgeExtension()
+        DatetimeAvroAttrsBridgeExtension.cls: DatetimeAvroAttrsBridgeExtension(),
+        CourseKeyAvroAttrsBridgeExtension.cls: CourseKeyAvroAttrsBridgeExtension(),
     }
     # default config, should be overwritten by passing in config during obj initialization
     default_config = {
@@ -32,7 +34,7 @@ class AvroAttrsBridge:
         "type": "org.openedx.test.test.test.v0",
     }
 
-    def __init__(self,  attrs_cls=None,  extensions=None, config=None, signal_cls = None):
+    def __init__(self, signal_cls, extensions=None, config=None):
         """
         Init method for Avro Attrs Bridge.
 
@@ -65,58 +67,18 @@ class AvroAttrsBridge:
         if isinstance(config, dict):
             self.config.update(config)
 
-        if attrs_cls is not None:
-            self._attrs_cls = attrs_cls
-            # Used by record_field_for_attrs_class function to keep track of which
-            # records have already been defined in schema.
-            # Reason: fastavro does no allow you to define record with same name twice
-            self.schema_record_names = set()
-            self.schema_dict = self._attrs_to_avro_schema(attrs_cls)
-            # make sure the schema is parsable
-            fastavro.parse_schema(self.schema_dict)
-        elif signal_cls is not None:
-            self._signal_cls = signal_cls
-            # Used by record_field_for_attrs_class function to keep track of which
-            # records have already been defined in schema.
-            # Reason: fastavro does no allow you to define record with same name twice
-            self.schema_record_names = set()
-            self.schema_dict = self._signal_to_avro_schema(signal_cls)
-            # make sure the schema is parsable
-            fastavro.parse_schema(self.schema_dict)
+        self._signal_cls = signal_cls
+        # Used by record_field_for_attrs_class function to keep track of which
+        # records have already been defined in schema.
+        # Reason: fastavro does no allow you to define record with same name twice
+        self.schema_record_names = set()
+        self.schema_dict = self._signal_to_avro_schema(signal_cls)
+        # make sure the schema is parsable
+        fastavro.parse_schema(self.schema_dict)
 
     def schema_str(self):
         """Json dumps schema dict into a string."""
         return json.dumps(self.schema_dict, sort_keys=True)
-
-    def _attrs_to_avro_schema(self, attrs_cls):
-        """
-        Generate avro schema for attr_cls.
-
-        Arguments:
-            attrs_cls: Attr class object
-        Returns:
-            complex dict that defines avro schema for attrs_cls
-        """
-        base_schema = {
-            "namespace": "io.cloudevents",
-            "type": "record",
-            "name": "CloudEvent",
-            "version": "1.0",
-            "doc": "Avro Event Format for CloudEvents created with openedx_events/avro_attrs_bridge",
-            "fields": [
-                {"name": "id", "type": "string"},
-                {"name": "type", "type": "string"},
-                {"name": "specversion", "type": "string", "default": "1.0"},
-                {"name": "time", "type": "string"},
-                {"name": "source", "type": "string"},
-                {"name": "sourcehost", "type": "string"},
-                {"name": "minorversion", "type": "int"},
-            ],
-        }
-
-        record_fields = self._record_fields_for_attrs_class(attrs_cls, "data")
-        base_schema["fields"].append(record_fields)
-        return base_schema
 
     def _signal_to_avro_schema(self, signal_cls):
         """
@@ -249,38 +211,36 @@ class AvroAttrsBridge:
         )
         return avro_record
 
-    def serialize(self, obj) -> bytes:
-        """
-        Convert from attrs to a valid avro record.
-        """
-        avro_record = self.to_dict(obj)
-        # Try to serialize using the generated schema.
-        out = io.BytesIO()
-        fastavro.schemaless_writer(out, self.schema_dict, avro_record)
-        out.seek(0)
-        return out.read()
-
     def serialize_signal(self, **kwargs) -> bytes:
         """
         Convert from attrs to a valid avro record.
         """
         # Try to serialize using the generated schema.
         out = io.BytesIO()
+        # TODO I'm using json to covert dict of complex object into a dic of not complex object. Is that a good idea?
         data_dict = {"data": json.loads(json.dumps(kwargs,  sort_keys=True, default=self._extension_signal_serializer))}
         fastavro.schemaless_writer(out, self.schema_dict, data_dict)
         out.seek(0)
         return out.read()
+
     def _extension_serializer(self, _, field, value):
         """
         Pass this callback into attrs.asdict function as "value_serializer" arg.
-
         Serializes values for which an extention exists in self.extensions dict.
         """
         extension = self.extensions.get(field.type, None)
         if extension is not None:
             return extension.serialize(value)
         return value
+
     def _extension_signal_serializer(self, value):
+        """
+        TODO: fix documentation
+        This one is used for JSON serialization.
+        Pass this callback into attrs.asdict function as "value_serializer" arg.
+
+        Serializes values for which an extention exists in self.extensions dict.
+        """
         if hasattr(value, "__attrs_attrs__"):
             return attr.asdict(value, value_serializer=self._extension_serializer)
         extension = self.extensions.get(type(value), None)
@@ -288,26 +248,11 @@ class AvroAttrsBridge:
             return extension.serialize(value)
         return value
 
-    def deserialize(self, data: bytes, writer_schema=None) -> object:
-        """
-        Deserialize data into self.attrs_cls instance.
-
-        Args:
-            data: bytes that you want to deserialize
-            writer_schema: pass the schema used to serialize data if it is differnt from current schema
-        """
-        data_file = io.BytesIO(data)
-        if writer_schema is not None:
-            record = fastavro.schemaless_reader(
-                data_file, writer_schema, self.schema_dict
-            )
-        else:
-            record = fastavro.schemaless_reader(data_file, self.schema_dict)
-        return self.dict_to_attrs(record["data"], self._attrs_cls)
 
     def deserialize_signal(self, data: bytes, writer_schema=None) -> object:
         """
-        Deserialize data into self.attrs_cls instance.
+        Deserialize data into self.signal class instance.
+        TODO: fix documentation for signal
 
         Args:
             data: bytes that you want to deserialize
@@ -323,6 +268,9 @@ class AvroAttrsBridge:
         return self.dict_to_signal(record["data"])
 
     def dict_to_signal(self, data):
+        """
+        TODO: document
+        """
         for key, data_type in self._signal_cls.init_data.items():
             if key in data:
                 if hasattr(data_type, "__attrs_attrs__"):
@@ -372,6 +320,7 @@ class AvroAttrsBridge:
 
 class AvroAttrsBridgeKafkaWrapper(AvroAttrsBridge):
     """
+    TODO: modify class to handle signals instead of attrs
     Wrapper class to help AvroAttrsBridge to work with kafka.
     """
 
