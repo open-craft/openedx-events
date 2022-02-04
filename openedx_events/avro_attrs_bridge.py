@@ -27,45 +27,19 @@ class AvroAttrsBridge:
         DatetimeAvroAttrsBridgeExtension.cls: DatetimeAvroAttrsBridgeExtension(),
         CourseKeyAvroAttrsBridgeExtension.cls: CourseKeyAvroAttrsBridgeExtension(),
     }
-    # default config, should be overwritten by passing in config during obj initialization
-    default_config = {
-        "source": "/openedx/unknown/avro_attrs_bridge",
-        "sourcehost": "unknown",
-        "type": "org.openedx.test.test.test.v0",
-    }
-
-    def __init__(self, signal_cls, extensions=None, config=None):
+    def __init__(self, signal_cls, extensions=None):
         """
         Init method for Avro Attrs Bridge.
 
         Arguments:
             attrs_cls: Attr Class Object (not instance)
             extensions: dict mapping Class Object to its AvroAttrsBridgeExtention subclass instance
-            config: dict with followings keys
-                - source:  This field will be used to indicate the logical source of an event, and will be of the form
-                           /{namespace}/{service}/{web|worker}.
-                           All services in standard distribution of Open edX should use openedx for the namespace.
-                           Examples of services might be “discovery”, “lms”, “studio”, etc.
-                           The value “web” will be used for events emitted by the web application,
-                           and “worker” will be used for events emitted by asynchronous tasks such as celery workers.
-                           For more info, see OEP-41: Asynchronous Server Event Message Format
-                - sourcehost: should represent the physical source of message
-                               -- i.e. host identifier of the server that emitted this event (example: edx.devstack.lms)
-                              For more info, see OEP-41: Asynchronous Server Event Message Format
-                - type: The name of event.
-                        Should be formatted `{Reverse DNS}.{Architecture Subdomain}.{Subject}.{Action}.{Major Version}`.
-                        For more info, see OEP-41: Asynchronous Server Event Message Format
         """
 
         self.extensions = {}
         self.extensions.update(self.default_extensions)
         if isinstance(extensions, dict):
             self.extensions.update(extensions)
-
-        self.config = {}
-        self.config.update(self.default_config)
-        if isinstance(config, dict):
-            self.config.update(config)
 
         self._signal_cls = signal_cls
         # Used by record_field_for_attrs_class function to keep track of which
@@ -177,39 +151,17 @@ class AvroAttrsBridge:
             field["type"]["fields"].append(self._get_object_fields(attribute.name, attribute.type, True, attribute.default))
         return field
 
-    def to_dict(self, obj, event_overrides=None):
+    def to_dict(self, data_dict):
         """
-        Convert obj into dictionary that matches avro schema (self.schema).
+        Convert data_dict into dictionary that matches avro schema (self.schema).
 
         Args:
-            obj: instance of self._attr_cls
-            event_overrides: dict with following value overwrites:
-                - id: unique id for this event. If id is not in dict, a uuid1 will be created for this event
-                      For more info, see OEP-41: Asynchronous Server Event Message Format
-                - time: time stamp for this event. If time is not in dict, datetime.now() will be called
-                        For more info, see OEP-41: Asynchronous Server Event Message Format
+            data_dict: dict with all the values specified in OpenEdxPublicSignal.init_data.
         """
-        if isinstance(event_overrides, dict) and "id" in event_overrides:
-            event_id = event_overrides["id"]
-        else:
-            event_id = str(uuid.uuid1())
-        if isinstance(event_overrides, dict) and "time" in event_overrides:
-            event_timestamp = event_overrides["time"]
-        else:
-            event_timestamp = datetime.now().isoformat()
-        obj_as_dict = attr.asdict(obj, value_serializer=self._extension_serializer)
-        # Not sure if it makes sense to keep version info here since the schema registry will actually
-        # keep track of versions and the topic can have only one associated schema at a time.
-        avro_record = dict(
-            id=event_id,
-            type=self.config["type"],
-            time=event_timestamp,
-            source=self.config["source"],
-            sourcehost=self.config["sourcehost"],
-            minorversion=0,
-            data=obj_as_dict,
-        )
-        return avro_record
+        # TODO: is there better way to do this besides using json?
+        # This first converts data_dict to json string and then back to dict.
+        # The goal: Covert everything with type is self.extensions is coverted to serializable formats and
+        return {"data": json.loads(json.dumps(data_dict,  sort_keys=True, default=self._extension_signal_serializer))}
 
     def serialize_signal(self, **kwargs) -> bytes:
         """
@@ -217,6 +169,7 @@ class AvroAttrsBridge:
         """
         # Try to serialize using the generated schema.
         out = io.BytesIO()
+        data_dict = self.to_dict(kwargs)
         # TODO I'm using json to covert dict of complex object into a dic of not complex object. Is that a good idea?
         data_dict = {"data": json.loads(json.dumps(kwargs,  sort_keys=True, default=self._extension_signal_serializer))}
         fastavro.schemaless_writer(out, self.schema_dict, data_dict)
