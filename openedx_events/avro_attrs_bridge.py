@@ -72,7 +72,6 @@ class AvroAttrsBridge:
             # Reason: fastavro does no allow you to define record with same name twice
             self.schema_record_names = set()
             self.schema_dict = self._attrs_to_avro_schema(attrs_cls)
-            breakpoint()
             # make sure the schema is parsable
             fastavro.parse_schema(self.schema_dict)
         elif signal_cls is not None:
@@ -82,7 +81,6 @@ class AvroAttrsBridge:
             # Reason: fastavro does no allow you to define record with same name twice
             self.schema_record_names = set()
             self.schema_dict = self._signal_to_avro_schema(signal_cls)
-            breakpoint()
             # make sure the schema is parsable
             fastavro.parse_schema(self.schema_dict)
 
@@ -132,6 +130,7 @@ class AvroAttrsBridge:
 
         base_schema = {
             "type": "record",
+            "name": "OpenedxSignal",
             "fields": [
             ],
         }
@@ -260,6 +259,16 @@ class AvroAttrsBridge:
         out.seek(0)
         return out.read()
 
+    def serialize_signal(self, **kwargs) -> bytes:
+        """
+        Convert from attrs to a valid avro record.
+        """
+        # Try to serialize using the generated schema.
+        out = io.BytesIO()
+        data_dict = {"data": json.loads(json.dumps(kwargs,  sort_keys=True, default=self._extension_signal_serializer))}
+        fastavro.schemaless_writer(out, self.schema_dict, data_dict)
+        out.seek(0)
+        return out.read()
     def _extension_serializer(self, _, field, value):
         """
         Pass this callback into attrs.asdict function as "value_serializer" arg.
@@ -267,6 +276,13 @@ class AvroAttrsBridge:
         Serializes values for which an extention exists in self.extensions dict.
         """
         extension = self.extensions.get(field.type, None)
+        if extension is not None:
+            return extension.serialize(value)
+        return value
+    def _extension_signal_serializer(self, value):
+        if hasattr(value, "__attrs_attrs__"):
+            return attr.asdict(value, value_serializer=self._extension_serializer)
+        extension = self.extensions.get(type(value), None)
         if extension is not None:
             return extension.serialize(value)
         return value
@@ -287,6 +303,37 @@ class AvroAttrsBridge:
         else:
             record = fastavro.schemaless_reader(data_file, self.schema_dict)
         return self.dict_to_attrs(record["data"], self._attrs_cls)
+
+    def deserialize_signal(self, data: bytes, writer_schema=None) -> object:
+        """
+        Deserialize data into self.attrs_cls instance.
+
+        Args:
+            data: bytes that you want to deserialize
+            writer_schema: pass the schema used to serialize data if it is differnt from current schema
+        """
+        data_file = io.BytesIO(data)
+        if writer_schema is not None:
+            record = fastavro.schemaless_reader(
+                data_file, writer_schema, self.schema_dict
+            )
+        else:
+            record = fastavro.schemaless_reader(data_file, self.schema_dict)
+        return self.dict_to_signal(record["data"])
+
+    def dict_to_signal(self, data):
+        for key, data_type in self._signal_cls.init_data.items():
+            if key in data:
+                if hasattr(data_type, "__attrs_attrs__"):
+                    data[key] = self.dict_to_attrs(data[key], data_type)
+                elif type(data[key]) == data_type:
+                    pass
+                elif data_type in self.extensions:
+                    extension = self.extensions.get(data_type)
+                    data[key] = extension.deserialize(data[key])
+                else:
+                    breakpoint()
+        return data
 
     def dict_to_attrs(self, data: dict, attrs_cls):
         """
