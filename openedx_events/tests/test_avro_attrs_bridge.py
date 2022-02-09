@@ -60,206 +60,35 @@ class TestNoneBaseTypesInBridge(TestCase):
         object_from_wire = bridge.deserialize_signal(serialized_course_enrollment_data)
         assert {"enrollment": self.course_enrollment_data} == object_from_wire
 
-    def test_schema_evolution_add_value(self):
-        """
-        Make sure new consumer can handle messasges created with old schema
-        """
-        # Create object from old specification
-        old_bridge = AvroAttrsBridge(
-            self.SIGNAL_TO_SEND,
-        )
-        serialized_course_enrollment_data = old_bridge.serialize_signal(
-            enrollment=self.course_enrollment_data
-        )
-
-        def inner_scope(self):
-            # Evolve schema by adding is_active_2
-            @attr.s(frozen=True)
-            class CourseEnrollmentData:  # pylint: disable=redefined-outer-name
-                """
-                Temp class create to test schema evolution.
-                """
-
-                user = attr.ib(type=UserData)
-                course = attr.ib(type=CourseData)
-                mode = attr.ib(type=str)
-                is_active = attr.ib(type=bool)
-                creation_date = attr.ib(type=datetime)
-                is_active_2 = attr.ib(type=bool, default=False)
-                created_by = attr.ib(type=UserData, default=None)
-
-            SIGNAL_TO_SEND = OpenEdxPublicSignal(
-                event_type="org.openedx.test.test.test.v0",
-                data={"enrollment": CourseEnrollmentData,})
-
-            # Create new bridge(new consumer)
-            new_bridge = AvroAttrsBridge(
-                SIGNAL_TO_SEND,
-            )
-            # Use new bridge to ready data serialized with old schema
-            object_from_wire = new_bridge.deserialize_signal(
-                    serialized_course_enrollment_data, old_bridge.schema_dict
-                )["enrollment"]
-            # Since its easier to compare dicts over complex classes,
-            # turning objects into dicts for comparison
-            object_from_wire_as_dict = attr.asdict(object_from_wire)
-            original_object_as_dict = attr.asdict(self.course_enrollment_data)
-            # Adding new info to old object to make sure everything else but the new info(is_active 2) is the same
-            original_object_as_dict["is_active_2"] = False
-            assert object_from_wire_as_dict == original_object_as_dict
-        inner_scope(self)
-
-    def test_schema_evolution_remove_value(self):
+    def test_schema_evolution_producer_adds_value(self):
         """
         Make sure old consumer can handle serialized objects with old schema.
         """
         # Create object from old specification
-        old_bridge = AvroAttrsBridge(
+        old_consumer_bridge = AvroAttrsBridge(
             self.SIGNAL_TO_SEND,
         )
 
-        serialized_course_enrollment_data = old_bridge.serialize_signal(
-            enrollment=self.course_enrollment_data
-        )
 
         def inner_scope(self):
-            # Evolve schema by removing "is_active"
-            @attr.s(frozen=True)
-            class CourseEnrollmentData:  # pylint: disable=redefined-outer-name
-                """
-                Temp class create to test schema evolution.
-                """
-
-                user = attr.ib(type=UserData)
-                course = attr.ib(type=CourseData)
-                mode = attr.ib(type=str)
-                creation_date = attr.ib(type=datetime)
-                created_by = attr.ib(type=UserData, default=None)
-
             SIGNAL_TO_SEND = OpenEdxPublicSignal(
                 event_type="org.openedx.test.test.test.v0",
-                data={"enrollment": CourseEnrollmentData,})
+                data={"enrollment": CourseEnrollmentData, "new_key":str})
 
             # Create new bridge(new consumer)
-            new_bridge = AvroAttrsBridge(
+            new_producer_bridge = AvroAttrsBridge(
                 SIGNAL_TO_SEND,
             )
-            # Use new bridge to ready data serialized with old schema
-            object_from_wire = new_bridge.deserialize_signal(
-                    serialized_course_enrollment_data, old_bridge.schema_dict
-                )["enrollment"]
-            # Since its easier to compare dicts over complex classes,
-            # turning objects into dicts for comparison
-            object_from_wire_as_dict = attr.asdict(object_from_wire)
-
-            original_object_as_dict = attr.asdict(self.course_enrollment_data)
-            del original_object_as_dict["is_active"]
-            assert object_from_wire_as_dict == original_object_as_dict
-
-        inner_scope(self)
-
-    def test_schema_evolution_add_complex_value(self):
-        """
-        Make sure new consumer can handle messasges created with old schema
-        """
-        # Create object from old specification
-        old_bridge = AvroAttrsBridge(
-            self.SIGNAL_TO_SEND,
-        )
-
-        serialized_course_enrollment_data = old_bridge.serialize_signal(
-            enrollment=self.course_enrollment_data
-        )
-
-        def inner_scope(self):
-
-            user_personal_data = UserPersonalData(
-                username="username", email="email", name="name"
-            )
-            user_data = UserData(id=1, is_active=True, pii=user_personal_data)
-
-            @attr.s(frozen=True)
-            class CourseEnrollmentData:  # pylint: disable=redefined-outer-name
-                """
-                Temp class create to test schema evolution.
-                """
-
-                user = attr.ib(type=UserData)
-                course = attr.ib(type=CourseData)
-                mode = attr.ib(type=str)
-                is_active = attr.ib(type=bool)
-                creation_date = attr.ib(type=datetime)
-                created_by = attr.ib(type=UserData, default=None)
-                user2 = attr.ib(type=UserData, default=user_data)
-
-            SIGNAL_TO_SEND = OpenEdxPublicSignal(
-                event_type="org.openedx.test.test.test.v0",
-                data={"enrollment": CourseEnrollmentData,})
-
-            # Create new bridge(new consumer)
-            new_bridge = AvroAttrsBridge(
-                SIGNAL_TO_SEND,
+            serialized_course_enrollment_data = new_producer_bridge.serialize_signal(
+                enrollment=self.course_enrollment_data, new_key="new_value"
             )
             # Use new bridge to ready data serialized with old schema
-            object_from_wire = new_bridge.deserialize_signal(
-                    serialized_course_enrollment_data, old_bridge.schema_dict
-                )["enrollment"]
-            # Since its easier to compare dicts over complex classes,
-            # turning objects into dicts for comparison
-            object_from_wire_as_dict = attr.asdict(object_from_wire)
-
-            original_object_as_dict = attr.asdict(self.course_enrollment_data)
-            original_object_as_dict["user2"] = attr.asdict(user_data)
-            assert object_from_wire_as_dict == original_object_as_dict
-
-        inner_scope(self)
-
-    def test_schema_evolution_add_complex_extension_value(self):
-        # Create object from old specification
-        old_bridge = AvroAttrsBridge(
-            self.SIGNAL_TO_SEND,
-        )
-
-        serialized_course_enrollment_data = old_bridge.serialize_signal(
-            enrollment=self.course_enrollment_data
-        )
-
-        def inner_scope(self):
-
-            @attr.s(frozen=True)
-            class CourseEnrollmentData:  # pylint: disable=redefined-outer-name
-                """
-                Temp class create to test schema evolution.
-                """
-
-                user = attr.ib(type=UserData)
-                course = attr.ib(type=CourseData)
-                mode = attr.ib(type=str)
-                is_active = attr.ib(type=bool)
-                creation_date = attr.ib(type=datetime)
-                created_by = attr.ib(type=UserData, default=None)
-                added_date = attr.ib(type=datetime, default=None)
-
-            SIGNAL_TO_SEND = OpenEdxPublicSignal(
-                event_type="org.openedx.test.test.test.v0",
-                data={"enrollment": CourseEnrollmentData,})
-
-            # Create new bridge(new consumer)
-            new_bridge = AvroAttrsBridge(
-                SIGNAL_TO_SEND,
-            )
-            # Use new bridge to ready data serialized with old schema
-            object_from_wire = new_bridge.deserialize_signal(
-                    serialized_course_enrollment_data, old_bridge.schema_dict
+            course_enrollment_data_from_wire = old_consumer_bridge.deserialize_signal(
+                    serialized_course_enrollment_data, new_producer_bridge.schema_dict
                 )["enrollment"]
 
-            # Since its easier to compare dicts over complex classes,
-            # turning objects into dicts for comparison
-            object_from_wire_as_dict = attr.asdict(object_from_wire)
+            assert course_enrollment_data_from_wire == self.course_enrollment_data
 
-            original_object_as_dict = attr.asdict(self.course_enrollment_data)
-            original_object_as_dict["added_date"] = None
-            assert object_from_wire_as_dict == original_object_as_dict
         inner_scope(self)
 
     def test_throw_exception_on_unextended_custom_type(self):
@@ -277,72 +106,35 @@ class TestNoneBaseTypesInBridge(TestCase):
             # This should raise TypeError cause no extensions to serialize/deserialize UnExtededClass are being passed to bridge
             AvroAttrsBridge(SIGNAL_TO_SEND)
 
-
-
-def test_object_evolution_add_value():
-    @attr.s(auto_attribs=True)
-    class TestData:
-        sub_name: str
-        course_id: str
-
-    SIGNAL_TO_SEND = OpenEdxPublicSignal(
-        event_type="org.openedx.test.test.test.v0",
-        data={"test_data": TestData,})
-    original_bridge = AvroAttrsBridge(SIGNAL_TO_SEND)
-
-    test_data = TestData("sub_name", "course_id")
-    serialized_record = original_bridge.serialize_signal(test_data=test_data)
-
-    @attr.s(auto_attribs=True)
-    class TestData:  # pylint: disable=function-redefined
-        sub_name: str
-        course_id: str
-        added_key: str = "default_value"
-
-    SIGNAL_TO_SEND = OpenEdxPublicSignal(
-        event_type="org.openedx.test.test.test.v0",
-        data={"test_data": TestData,})
-    new_bridge = AvroAttrsBridge(SIGNAL_TO_SEND)
-    deserialized_obj = new_bridge.deserialize_signal(
-        serialized_record, original_bridge.schema_dict
-    )
-    assert deserialized_obj == {"test_data": TestData(
-        sub_name="sub_name", course_id="course_id", added_key="default_value"
-    )}
-
-
-def test_object_evolution_remove_value():
+def test_object_evolution_producer_adds_value():
     @attr.s(auto_attribs=True)
     class TestData:
         sub_name: str
         course_id: str
         removed_key: str
 
+
     SIGNAL_TO_SEND = OpenEdxPublicSignal(
         event_type="org.openedx.test.test.test.v0",
         data={"test_data": TestData,})
-    original_bridge = AvroAttrsBridge(SIGNAL_TO_SEND)
+    old_consumer_bridge= AvroAttrsBridge(SIGNAL_TO_SEND)
+
+    SIGNAL_TO_SEND = OpenEdxPublicSignal(
+        event_type="org.openedx.test.test.test.v0",
+        data={"test_data": TestData,
+              "test_data2": TestData,})
+    new_producer_bridge = AvroAttrsBridge(SIGNAL_TO_SEND)
 
     test_data = TestData("sub_name", "course_id", "removed_value")
-    serialized_record = original_bridge.serialize_signal(test_data=test_data)
+    serialized_record = new_producer_bridge.serialize_signal(test_data=test_data, test_data2=test_data)
 
-    @attr.s(auto_attribs=True)
-    class TestData:  # pylint: disable=function-redefined
-        sub_name: str
-        course_id: str
-
-
-    SIGNAL_TO_SEND = OpenEdxPublicSignal(
-        event_type="org.openedx.test.test.test.v0",
-        data={"test_data": TestData,})
-    new_bridge = AvroAttrsBridge(SIGNAL_TO_SEND)
-    deserialized_obj = new_bridge.deserialize_signal(
-        serialized_record, original_bridge.schema_dict
+    deserialized_obj = old_consumer_bridge.deserialize_signal(
+        serialized_record, new_producer_bridge.schema_dict
     )
-    assert deserialized_obj == {"test_data": TestData(sub_name="sub_name", course_id="course_id")}
+    assert deserialized_obj == {"test_data": TestData(sub_name="sub_name", course_id="course_id", removed_key="removed_value")}
 
 
-def test_base_types():
+def test_nexted_attrs_object_serialization():
     @attr.s(auto_attribs=True)
     class SubTestData:
         sub_name: str
