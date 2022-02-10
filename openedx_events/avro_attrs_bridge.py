@@ -3,14 +3,15 @@ Code to convert attr classes to avro specification.
 """
 import io
 import json
-import uuid
-from datetime import datetime
 from typing import Any, Dict
 
 import attr
 import fastavro
 
-from openedx_events.avro_attrs_bridge_extensions import DatetimeAvroAttrsBridgeExtension, CourseKeyAvroAttrsBridgeExtension
+from openedx_events.avro_attrs_bridge_extensions import (
+    DatetimeAvroAttrsBridgeExtension,
+    CourseKeyAvroAttrsBridgeExtension,
+)
 
 from openedx_events.avro_types import PYTHON_TYPE_TO_AVRO_MAPPING
 
@@ -27,6 +28,7 @@ class AvroAttrsBridge:
         DatetimeAvroAttrsBridgeExtension.cls: DatetimeAvroAttrsBridgeExtension(),
         CourseKeyAvroAttrsBridgeExtension.cls: CourseKeyAvroAttrsBridgeExtension(),
     }
+
     def __init__(self, signal_cls, extensions=None):
         """
         Init method for Avro Attrs Bridge.
@@ -67,8 +69,7 @@ class AvroAttrsBridge:
         base_schema = {
             "type": "record",
             "name": "OpenedxSignal",
-            "fields": [
-            ],
+            "fields": [],
         }
         record_fields = self._record_fields_from_data_dict(signal_cls)
         base_schema["fields"].append(record_fields)
@@ -77,15 +78,16 @@ class AvroAttrsBridge:
     def _record_fields_from_data_dict(self, cls):
         field: Dict[str, Any] = {}
         field["name"] = "data"
-        field["type"] = dict(name='OpenEdxPublicSignal', type="record", fields=[])
+        field["type"] = dict(name="OpenEdxPublicSignal", type="record", fields=[])
         for key_name, data_type in cls.init_data.items():
             field["type"]["fields"].append(self._get_object_fields(key_name, data_type))
         return field
 
-
-    def _get_object_fields(self, object_name, _object_type,if_default=False, default=None):
+    def _get_object_fields(
+        self, object_name, _object_type, if_default=False, default=None
+    ):
         inner_field = {"name": object_name}
-        if (extension := self.extensions.get(_object_type, None)):
+        if extension := self.extensions.get(_object_type, None):
             inner_field = {
                 "name": object_name,
                 "type": extension.record_fields(),
@@ -95,6 +97,7 @@ class AvroAttrsBridge:
             if PYTHON_TYPE_TO_AVRO_MAPPING[_object_type] in ["record", "array"]:
                 # TODO: figure out how to handle container types. This will require better specifications for types in openedx-events repositories.
                 # This is a conversation that needs to be had with others, for now, these data types will not be supported by this bridge.
+                # TODO: this exception shoudl be more specific.
                 raise Exception("item type for container object not specified")
             inner_field = {
                 "name": object_name,
@@ -123,6 +126,7 @@ class AvroAttrsBridge:
             raise TypeError(
                 f"Object type {_object_type} is not supported by AvroAttrsBridge. The object type needs to either be one of the types in PYTHON_TYPE_TO_AVRO_MAPPING, attrs decorated class, or one of the types defined in self.extensions"
             )
+
         # Assume _object_type is optional if it has a default value
         # The default value is always set to None to allow attr class to handle dealing with default values
         # in dict_to_attrs function in this class
@@ -134,7 +138,8 @@ class AvroAttrsBridge:
         return inner_field
 
     def _record_fields_for_attrs_class(
-        self, attrs_class, field_name: str) -> Dict[str, Any]:
+        self, attrs_class, field_name: str
+    ) -> Dict[str, Any]:
         """
         Generate avro record for attrs_class.
 
@@ -147,13 +152,18 @@ class AvroAttrsBridge:
         field["type"] = dict(name=attrs_class.__name__, type="record", fields=[])
 
         for attribute in attrs_class.__attrs_attrs__:
-            # TODO does get_object_fields need ot attribute.name
-            field["type"]["fields"].append(self._get_object_fields(attribute.name, attribute.type, True, attribute.default))
+            field["type"]["fields"].append(
+                self._get_object_fields(
+                    attribute.name, attribute.type, True, attribute.default
+                )
+            )
         return field
 
     def to_dict(self, data_dict):
         """
         Convert data_dict into dictionary that matches avro schema (self.schema).
+
+        Warning: this does not validate that the data_dict input matches self._signal_cls
 
         Args:
             data_dict: dict with all the values specified in OpenEdxPublicSignal.init_data.
@@ -161,30 +171,29 @@ class AvroAttrsBridge:
         # TODO: is there better way to do this besides using json?
         # This first converts data_dict to json string and then back to dict.
         # The goal: Covert everything with type is self.extensions is coverted to serializable formats and
-        return {"data": json.loads(json.dumps(data_dict,  sort_keys=True, default=self._extension_signal_serializer))}
+        return {
+            "data": json.loads(
+                json.dumps(
+                    data_dict, sort_keys=True, default=self._extension_signal_serializer
+                )
+            )
+        }
 
     def serialize_signal(self, **kwargs) -> bytes:
         """
         Convert from attrs to a valid avro record.
         """
-        # Try to serialize using the generated schema.
-        out = io.BytesIO()
-        data_dict = self.to_dict(kwargs)
-        # TODO I'm using json to covert dict of complex object into a dic of not complex object. Is that a good idea?
-        data_dict = {"data": json.loads(json.dumps(kwargs,  sort_keys=True, default=self._extension_signal_serializer))}
-        fastavro.schemaless_writer(out, self.schema_dict, data_dict)
-        out.seek(0)
-        return out.read()
-
-    def _extension_serializer(self, _, field, value):
-        """
-        Pass this callback into attrs.asdict function as "value_serializer" arg.
-        Serializes values for which an extention exists in self.extensions dict.
-        """
-        extension = self.extensions.get(field.type, None)
-        if extension is not None:
-            return extension.serialize(value)
-        return value
+        if sorted(kwargs.keys()) == sorted(self._signal_cls.init_data.keys()):
+            # Try to serialize using the generated schema.
+            out = io.BytesIO()
+            data_dict = self.to_dict(kwargs)
+            fastavro.schemaless_writer(out, self.schema_dict, data_dict)
+            out.seek(0)
+            return out.read()
+        else:
+            raise TypeError(
+                f"All and only keys in init_data are required for serialization. Expected: {self._signal_cls.init_data.keys()}\n Got: {kwargs.keys()}"
+            )
 
     def _extension_signal_serializer(self, value):
         """
@@ -201,6 +210,15 @@ class AvroAttrsBridge:
             return extension.serialize(value)
         return value
 
+    def _extension_serializer(self, _, field, value):
+        """
+        Pass this callback into attrs.asdict function as "value_serializer" arg.
+        Serializes values for which an extention exists in self.extensions dict.
+        """
+        extension = self.extensions.get(field.type, None)
+        if extension is not None:
+            return extension.serialize(value)
+        return value
 
     def deserialize_signal(self, data: bytes, writer_schema=None) -> object:
         """
@@ -228,13 +246,14 @@ class AvroAttrsBridge:
             if key in data:
                 if hasattr(data_type, "__attrs_attrs__"):
                     data[key] = self.dict_to_attrs(data[key], data_type)
-                elif type(data[key]) == data_type:
+                elif isinstance(data[key], data_type):
                     pass
                 elif data_type in self.extensions:
                     extension = self.extensions.get(data_type)
                     data[key] = extension.deserialize(data[key])
                 else:
-                    breakpoint()
+                    # TODO: this exception should never be raised. Verify.
+                    raise Exception("Unexpected key found in data: {key}")
         return data
 
     def dict_to_attrs(self, data: dict, attrs_cls):
@@ -277,7 +296,7 @@ class AvroAttrsBridgeKafkaWrapper(AvroAttrsBridge):
     Wrapper class to help AvroAttrsBridge to work with kafka.
     """
 
-    def to_dict(self, obj, _kafka_context):  # pylint: disable=signature-differs
+    def to_dict(self, obj, _kafka_context):  # pylint: disable=arguments-differ
         """
         Pass this function as callable input to confluent_kafka::AvroSerializer.
         """
@@ -287,4 +306,4 @@ class AvroAttrsBridgeKafkaWrapper(AvroAttrsBridge):
         """
         Pass this function as callable input to confluent_kafka::AvroDeSerializer.
         """
-        return self.dict_to_attrs(data["data"], self._attrs_cls)
+        return self.dict_to_attrs(data["data"], self._signal_cls)
