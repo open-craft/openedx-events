@@ -130,7 +130,10 @@ class AvroAttrsBridge:
         # Assume _object_type is optional if it has a default value
         # The default value is always set to None to allow attr class to handle dealing with default values
         # in dict_to_attrs function in this class
-        # TODO make sure defaults are handled properly
+        # TODO make sure optionality is handled properly
+        # Currently, for attrs object, if an attribute has a default (this is questionable and there likely better ways),
+        #   - it is assumed to be optional and its properly handled here and in dict_to_attrs function.
+        # Optionality is not handled for anything outside an attrs decorated class.
         if if_default and default is not attr.NOTHING:
             inner_field["type"] = ["null", inner_field["type"]]
             inner_field["default"] = None
