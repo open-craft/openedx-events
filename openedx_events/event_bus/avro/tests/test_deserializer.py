@@ -1,6 +1,7 @@
 """Tests for avro.deserializer"""
 import json
 from datetime import datetime
+from typing import List
 from unittest import TestCase
 
 from opaque_keys.edx.keys import CourseKey, UsageKey
@@ -175,3 +176,31 @@ class TestAvroSignalDeserializerCache(TestCase, FreezeSignalCacheMixin):
         nested_field = data_dict["data"].field_0
         self.assertIsInstance(nested_field, SimpleAttrsWithDefaults)
         self.assertEqual(nested_field, SimpleAttrsWithDefaults())
+
+    def test_deserialization_of_list_with_annotation(self):
+        LIST_SIGNAL = create_simple_signal({"list_input": List[int]})
+        initial_dict = {"list_input": [1, 3]}
+        deserializer = AvroSignalDeserializer(LIST_SIGNAL)
+        event_data = deserializer.from_dict(initial_dict)
+        expected_event_data = [1, 3]
+        test_data = event_data["list_input"]
+        self.assertIsInstance(test_data, list)
+        self.assertEqual(test_data, expected_event_data)
+
+    def test_deserialization_of_list_without_annotation(self):
+        SIGNAL = create_simple_signal({"list_input": List[int]})
+        LIST_SIGNAL = create_simple_signal({"list_input": List})
+        initial_dict = {"list_input": [1, 3]}
+        deserializer = AvroSignalDeserializer(SIGNAL)
+        deserializer.signal = LIST_SIGNAL
+        with self.assertRaises(TypeError):
+            deserializer.from_dict(initial_dict)
+
+    def test_deserialization_of_nested_list_fails(self):
+        SIGNAL = create_simple_signal({"list_input": List[int]})
+        LIST_SIGNAL = create_simple_signal({"list_input": List[List[int]]})
+        initial_dict = {"list_input": [1, 3]}
+        deserializer = AvroSignalDeserializer(SIGNAL)
+        deserializer.signal = LIST_SIGNAL
+        with self.assertRaises(TypeError):
+            deserializer.from_dict(initial_dict)
