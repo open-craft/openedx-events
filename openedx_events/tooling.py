@@ -194,7 +194,10 @@ class OpenEdxPublicSignal(Signal):
             >>> [(<function callback at 0x7f2ce638ef70>, 'callback response')]
 
         Arguments:
-            send_robust (bool): Defaults to True. See Django signal docs.
+            send_robust (bool): Defaults to True unless settings.DEBUG is True or you have previously
+               called .allow_send_event_failure() for this signal. When this is True, exceptions that
+               occurr during event handling will be ignored, ensuring that every registered receiver
+               gets the event. This can make debugging difficult, however. See Django signal docs.
             time (datetime): (Optional - see note) Timestamp when the event was sent with UTC
                timezone. For events requiring a DB create or update, use the timestamp from the DB
                record. Defaults to current time in UTC. This argument is optional for backward
@@ -266,8 +269,9 @@ class OpenEdxPublicSignal(Signal):
 
     def allow_send_event_failure(self):
         """
-        Allow Django signal to fail. Meaning, uses send_robust instead of send.
-
+        Do not silence exceptions in event handlers.
+        
+        Meaning, uses ``send()`` instead of ``send_robust()``.
         More information on send_robust in the Django official documentation.
         """
         self._allow_send_event_failure = True
